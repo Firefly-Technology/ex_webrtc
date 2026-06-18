@@ -157,7 +157,7 @@ defmodule ExWebRTC.DTLSTransport do
 
     if state.mode == :active do
       {:ok, packets, timeout} = ExDTLS.do_handshake(state.dtls)
-      Process.send_after(self(), :dtls_timeout, timeout)
+      arm_dtls_timer(timeout)
       :ok = do_send(state, packets)
       state = update_dtls_state(state, :connecting)
       Logger.debug("Started DTLS handshake")
@@ -365,20 +365,20 @@ defmodule ExWebRTC.DTLSTransport do
       {:retransmit, packets, timeout} when state.ice_connected ->
         :ok = do_send(state, packets)
         Logger.debug("Retransmitted DTLS packets")
-        Process.send_after(self(), :dtls_timeout, timeout)
+        arm_dtls_timer(timeout)
 
       {:retransmit, ^buffered_local_packets, timeout} ->
         # we got DTLS packets from the other side but
         # we haven't established ICE connection yet so
         # packets to retransmit have to be the same as dtls_buffered_packets
-        Process.send_after(self(), :dtls_timeout, timeout)
+        arm_dtls_timer(timeout)
 
       {:retransmit, _packets, timeout} ->
         Logger.warning(
           "DTLSTransport: Packets to retransmit differ from buffered local packets despite ICE not being connected"
         )
 
-        Process.send_after(self(), :dtls_timeout, timeout)
+        arm_dtls_timer(timeout)
 
       :ok ->
         :ok
@@ -445,7 +445,7 @@ defmodule ExWebRTC.DTLSTransport do
     case ExDTLS.handle_data(state.dtls, data) do
       {:handshake_packets, packets, timeout} when state.ice_connected ->
         :ok = do_send(state, packets)
-        Process.send_after(self(), :dtls_timeout, timeout)
+        arm_dtls_timer(timeout)
         state = update_dtls_state(state, :connecting)
         {:ok, state}
 
@@ -455,7 +455,7 @@ defmodule ExWebRTC.DTLSTransport do
         We will send those packets once ICE is ready.
         """)
 
-        Process.send_after(self(), :dtls_timeout, timeout)
+        arm_dtls_timer(timeout)
         state = %{state | buffered_local_packets: packets}
         state = update_dtls_state(state, :connecting)
         {:ok, state}
@@ -589,8 +589,10 @@ defmodule ExWebRTC.DTLSTransport do
   end
 
   defp do_close(state, opts \\ []) do
-    {:ok, packets} = ExDTLS.close(state.dtls)
-    :ok = do_send(state, packets)
+    if state.dtls != nil do
+      {:ok, packets} = ExDTLS.close(state.dtls)
+      :ok = do_send(state, packets)
+    end
 
     %{
       state
@@ -603,6 +605,20 @@ defmodule ExWebRTC.DTLSTransport do
         mode: nil
     }
     |> update_dtls_state(:closed, opts)
+  end
+
+  @doc false
+  @spec arm_dtls_timer(term()) :: reference()
+  def arm_dtls_timer(timeout) when is_integer(timeout) and timeout >= 0 do
+    Process.send_after(self(), :dtls_timeout, timeout)
+  end
+
+  def arm_dtls_timer(timeout) do
+    Logger.warning(
+      "ExDTLS returned invalid retransmit timeout: #{inspect(timeout)}; clamping to 0"
+    )
+
+    Process.send_after(self(), :dtls_timeout, 0)
   end
 
   defp do_send(state, data) when is_list(data) do
