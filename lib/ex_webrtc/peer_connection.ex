@@ -246,6 +246,10 @@ defmodule ExWebRTC.PeerConnection do
     GenServer.cast(peer_connection, {:send_rtp, track_id, packet, opts})
   end
 
+  @doc "Waits until all previously queued RTP packets have reached the ICE transport."
+  @spec flush_rtp(peer_connection()) :: :ok
+  def flush_rtp(peer_connection), do: GenServer.call(peer_connection, :flush_rtp)
+
   @doc """
   Sends an RTCP PLI feedback to the remote peer using the track specified by the `track_id`.
 
@@ -1266,6 +1270,14 @@ defmodule ExWebRTC.PeerConnection do
     def handle_call({:get_data_channel, _channel_ref}, _from, _state) do
       raise("#{@sctp_error_text} #{@sctp_tip}")
     end
+  end
+
+  @impl true
+  def handle_call(:flush_rtp, _from, state) do
+    # send_rtp/4 is a cast. This call follows those casts from the same sender,
+    # and the DTLS call follows the casts that this process sent there.
+    :ok = DTLSTransport.flush_rtp(state.dtls_transport)
+    {:reply, :ok, state}
   end
 
   @impl true

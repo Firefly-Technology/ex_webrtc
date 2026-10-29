@@ -109,6 +109,10 @@ defmodule ExWebRTC.DTLSTransport do
     GenServer.cast(dtls_transport, {:send_rtp, data})
   end
 
+  @doc "Waits until previously queued RTP packets have been sent by ICE."
+  @spec flush_rtp(dtls_transport()) :: :ok
+  def flush_rtp(dtls_transport), do: GenServer.call(dtls_transport, :flush_rtp)
+
   @spec send_rtcp(dtls_transport(), binary()) :: :ok
   def send_rtcp(dtls_transport, data) do
     GenServer.cast(dtls_transport, {:send_rtcp, data})
@@ -215,6 +219,14 @@ defmodule ExWebRTC.DTLSTransport do
   @impl true
   def handle_call(:set_ice_disconnected, _from, state) do
     state = %{state | ice_connected: false}
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call(:flush_rtp, _from, state) do
+    # The ICE stats call follows the send_data casts from this process and
+    # therefore returns only after ICE has attempted those UDP sends.
+    _stats = state.ice_transport.get_stats(state.ice_pid)
     {:reply, :ok, state}
   end
 
